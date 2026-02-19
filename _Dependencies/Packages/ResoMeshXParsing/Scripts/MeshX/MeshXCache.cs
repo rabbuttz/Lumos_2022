@@ -16,6 +16,7 @@ namespace ResoMeshXParsing {
         private Dictionary<string, Mesh> cachedMeshData = new Dictionary<string, Mesh>();
         private static readonly ThreadLocal<SHA256> sha256Pool = new ThreadLocal<SHA256>(() => SHA256.Create(), trackAllValues: false);
         private static readonly char[] hexChars = "0123456789abcdef".ToCharArray();
+        public bool isConnected = false;
 
         public static MeshXCache Instance {
             get {
@@ -49,16 +50,22 @@ namespace ResoMeshXParsing {
             return null;
         }
 
+        //TODO: This method is very similar to UpdateTexturePathCache, refactor it in the future
         public async Task UpdatePathCache(Action<string, float> progressCallback = null) {
             if (!PathExists(cacheDirectory)) {
                 progressCallback?.Invoke("Cache directory does not exist", 1f);
                 return;
             }
 
+            int perTaskTimeoutMs = 10000;
             List<string> files = new List<string>();
-            foreach (string file in Directory.EnumerateFiles($"{cacheDirectory}\\Cache", "*", SearchOption.AllDirectories)) {
+
+            foreach (string file in Directory.EnumerateFiles($"{cacheDirectory}/Cache", "*", SearchOption.AllDirectories)) {
+                if (!isConnected) return;
+
                 string extension = Path.GetExtension(file);
-                if (extension == ".meshx" || !string.IsNullOrEmpty(extension)) continue;
+
+                if (extension == ".webp" || !string.IsNullOrEmpty(extension)) continue;
                 files.Add(file);
             }
 
@@ -73,29 +80,38 @@ namespace ResoMeshXParsing {
 
             List<Task> tasks = new List<Task>();
             for (int i = 0; i < files.Count; i++) {
+                if (!isConnected) return;
                 int index = i;
                 string file = files[index];
-                tasks.Add(Task.Run(() => {
-                    try {
-                        using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.SequentialScan)) {
-                            byte[] header = new byte[6];
-                            if (fs.Read(header, 0, 6) < 6 || !MeshXHelper.Instance.IsMeshXHeader(header)) {
-                                results[index] = (null, null);
-                                completed++;
-                                return;
-                            }
+                tasks.Add(Task.Run(async () => {
+                    if (!isConnected) return;
+                    Task workTask = Task.Run(() => {
+                        try {
+                            using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.SequentialScan)) {
+                                byte[] header = new byte[6];
+                                if (fs.Read(header, 0, 6) < 6 || !MeshXHelper.Instance.IsMeshXHeader(header)) {
+                                    results[index] = (null, null);
+                                    return;
+                                }
 
-                            fs.Position = 0;
-                            byte[] hashBytes = sha256Pool.Value.ComputeHash(fs);
-                            string hash = ByteArrayToHexString(hashBytes);
-                            results[index] = (hash, file);
+                                fs.Position = 0;
+                                byte[] hashBytes = sha256Pool.Value.ComputeHash(fs);
+                                string hash = ByteArrayToHexString(hashBytes);
+                                results[index] = (hash, file);
 
-                            if (!string.IsNullOrEmpty(hash) && !string.IsNullOrEmpty(file)) {
-                                cachedUriPaths[hash] = file;
+                                if (!string.IsNullOrEmpty(hash) && !string.IsNullOrEmpty(file)) {
+                                    cachedUriPaths[hash] = file;
+                                }
                             }
+                        } catch {
+                            results[index] = (null, null);
                         }
-                    } catch {
-                        completed++;
+                    });
+
+                    Task timeoutTask = Task.Delay(perTaskTimeoutMs);
+                    Task finishedTask = await Task.WhenAny(workTask, timeoutTask);
+
+                    if (finishedTask == timeoutTask) {
                         results[index] = (null, null);
                     }
 
@@ -103,7 +119,7 @@ namespace ResoMeshXParsing {
 
                     unityContext?.Post(_ => {
                         float percent = (float)done / files.Count;
-                        progressCallback?.Invoke($"Processing cache... {done} files", percent);
+                        progressCallback?.Invoke($"Processing meshx cache... {done} files", percent);
                     }, null);
                 }));
             }
@@ -135,7 +151,7 @@ namespace ResoMeshXParsing {
             return null;
         }
 
-        private bool PathExists(string path) {
+        public bool PathExists(string path) {
             return File.Exists(path) || Directory.Exists(path);
         }
 
