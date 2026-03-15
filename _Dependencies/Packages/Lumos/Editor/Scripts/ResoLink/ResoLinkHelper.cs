@@ -16,7 +16,7 @@ namespace LightBakingResoLink {
         private static ResoLinkHelper instance;
         public LinkInterface linkInterface;
         private static readonly object lockObj = new object();
-        private const int MAX_CONCURRENT_RESOLINK_REQUESTS = 10;
+        private const int MAX_CONCURRENT_RESOLINK_REQUESTS = 1;
         private const int MAX_CONCURRENT_MESH_DOWNLOADS = 10;
         public HierarchyData hierarchyData = null;
         private ConcurrentDictionary<string, SlotData> slotDataLookup = new ConcurrentDictionary<string, SlotData>();
@@ -351,19 +351,19 @@ namespace LightBakingResoLink {
             ConcurrentDictionary<string, SlotInfo> allSlots,
             ConcurrentDictionary<string, SlotInfo> slotsWithMeshRenderer,
             List<string> parentPath) {
-            if (rootSlotData == null) return null;
-            if (rootSlotData.Data == null) return null;
+            if (rootSlotData == null) return Task.CompletedTask;
+            if (rootSlotData.Data == null) return Task.CompletedTask;
 
             List<Slot> children = rootSlotData.Data.Children;
 
-            if (children == null)  return null;
-            if (children.Count == 0) return null;
+            if (children == null)  return Task.CompletedTask;
+            if (children.Count == 0) return Task.CompletedTask;
 
             SemaphoreSlim throttler = new SemaphoreSlim(MAX_CONCURRENT_RESOLINK_REQUESTS);
             List<Task> tasks = new List<Task>();
 
             foreach (Slot slot in children) {
-                if (!IsConnected()) return null;
+                if (!IsConnected()) return Task.CompletedTask;
                 tasks.Add(FetchChildSlotTask(throttler, slot, allSlots, slotsWithMeshRenderer, parentPath));
             }
 
@@ -403,14 +403,23 @@ namespace LightBakingResoLink {
         }
 
         public async Task FetchSlots(Action<string, float> progressCallback = null) {
-            if (!IsConnected()) return;
+            if (!IsConnected()) {
+                Debug.LogError("FetchSlots: Not connected to ResoLink.");
+                return;
+            }
 
             try {
                 SlotData rootSlotData = await FetchSlot("Root", true);
 
-                if (rootSlotData == null) return;
-                if (rootSlotData.Data == null) return;
-                
+                if (rootSlotData == null) {
+                    Debug.LogError("FetchSlots: rootSlotData is null. FetchSlot returned nothing.");
+                    return;
+                }
+                if (rootSlotData.Data == null) {
+                    Debug.LogError("FetchSlots: rootSlotData.Data is null.");
+                    return;
+                }
+
                 await FetchConfig(rootSlotData);
 
                 ConcurrentDictionary<string, SlotInfo> allSlots = new ConcurrentDictionary<string, SlotInfo>();
@@ -434,12 +443,25 @@ namespace LightBakingResoLink {
                 float fakeProgress = 0f;
 
                 while (!slots.IsCompleted) {
-                    if (!IsConnected()) return;
+                    if (!IsConnected()) {
+                        Debug.LogError($"FetchSlots: Disconnected during slot fetch. Slots fetched so far: {allSlots.Count}. Task status: {slots.Status}");
+                        if (slots.IsFaulted) {
+                            Debug.LogError($"FetchSlots: FetchAllSlots task faulted: {slots.Exception}");
+                        }
+                        return;
+                    }
 
                     fakeProgress += (0.95f - fakeProgress) * 0.001f;
                     progressCallback?.Invoke("Retrieving Data from ResoLink...", fakeProgress);
                     await Task.Delay(50);
                 }
+
+                if (slots.IsFaulted) {
+                    Debug.LogError($"FetchSlots: FetchAllSlots completed with error: {slots.Exception}");
+                    return;
+                }
+
+                await slots;
 
                 progressCallback?.Invoke("Retrieving Mesh Renderers", 1f);
 
@@ -486,6 +508,11 @@ namespace LightBakingResoLink {
 
         public Task BuildLookupTables(Action<string, float> progressCallback = null) {
             try {
+                if (hierarchyData?.AllSlots == null) {
+                    Debug.LogError("BuildLookupTables: hierarchyData is not initialized. Was the data fetch successful?");
+                    return Task.CompletedTask;
+                }
+
                 progressCallback?.Invoke("Building lookup tables...", 0f);
                 slotDataLookup = new ConcurrentDictionary<string, SlotData>();
 
@@ -553,6 +580,11 @@ namespace LightBakingResoLink {
         }
 
         public async Task DownloadAndApplyMeshes(Action<string, float, GameObject> progressCallback = null) {
+            if (hierarchyData?.SlotsWithMeshRenderer == null) {
+                Debug.LogError("DownloadAndApplyMeshes: hierarchyData is not initialized. Was the data fetch successful?");
+                return;
+            }
+
             List<(string, SlotInfo)> slotList = hierarchyData.SlotsWithMeshRenderer;
 
             progressCallback?.Invoke($"Downloading meshes... ", 0f, null);

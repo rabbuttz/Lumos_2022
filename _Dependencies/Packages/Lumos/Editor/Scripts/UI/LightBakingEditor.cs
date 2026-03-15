@@ -403,6 +403,7 @@ public class Lumos : EditorWindow {
         }[aoFilterIndex];
         lightingSettings.filteringGaussianRadiusDirect = aoRadius;
         lightingSettings.filteringAtrousPositionSigmaDirect = aoSigma;
+#if UNITY_6000_0_OR_NEWER
         lightingSettings.lightmapPackingMode = new[] {
             LightingSettings.LightmapPackingMode.Auto,
             LightingSettings.LightmapPackingMode.Custom
@@ -412,8 +413,9 @@ public class Lumos : EditorWindow {
             LightingSettings.LightmapPackingMethod.XAtlas
         }[packingMethodIndex];
         lightingSettings.packingAttempts = packingIterations;
-        lightingSettings.lightmapPadding = lightmapPadding;
         lightingSettings.blockAlignedPacking = blockAlignedPacking;
+#endif
+        lightingSettings.lightmapPadding = lightmapPadding;
         lightingSettings.lightmapResolution = lightmapResolution;
         lightingSettings.lightmapMaxSize = int.Parse(lightmapSizeOptions[lightmapSizeIndex]);
 
@@ -458,6 +460,12 @@ public class Lumos : EditorWindow {
             await ProgressBar(meshXCache.UpdatePathCache);
             await Task.Delay(1);
             await ProgressBar(resoLinkHelper.FetchSlots);
+
+            if (resoLinkHelper.hierarchyData == null) {
+                Debug.LogError("RetrieveMesh: FetchSlots failed to retrieve hierarchy data. Aborting.");
+                return;
+            }
+
             await Task.Delay(1);
             await ProgressBar(resoLinkHelper.BuildLookupTables);
             await Task.Delay(1);
