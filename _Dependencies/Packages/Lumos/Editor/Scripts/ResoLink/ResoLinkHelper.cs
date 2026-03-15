@@ -1070,7 +1070,10 @@ namespace LightBakingResoLink {
         }
 
         public async Task PrepareAndSendToResolink(Action<string, float> progressCallback) {
-            if (!IsConnected()) return;
+            if (!IsConnected()) {
+                Debug.LogWarning("ResoLink is not connected. Aborting send.");
+                return;
+            }
 
             try {
                 if (progressCallback == null) return;
@@ -1095,25 +1098,29 @@ namespace LightBakingResoLink {
                 textureElementsToSend = new List<Member>();
                 colorElementsToSend = new List<Member>();
 
+                progressCallback?.Invoke($"Sending lightmaps... (0/{total})", 0f);
+                await Task.Delay(1);
+
                 for (int i = 0; i < total; i++) {
-                    Mesh mesh = ApplyLightmapOffsetsToMesh(meshRenderers[i]);
-                    if (mesh == null) continue;
-
-                    Mesh duplicatedMesh = SetUV1ToUV0(mesh);
-                    if (duplicatedMesh == null) continue;
-
                     int lightmapIndex = meshRenderers[i].lightmapIndex;
                     if (lightmapIndex < 0 || lightmapIndex >= LightmapSettings.lightmaps.Length) continue;
 
                     LightmapData lightmapData = LightmapSettings.lightmaps[lightmapIndex];
                     if (lightmapData == null || lightmapData.lightmapColor == null) continue;
 
+                    Mesh mesh = ApplyLightmapOffsetsToMesh(meshRenderers[i]);
+                    if (mesh == null) continue;
+
+                    Mesh duplicatedMesh = SetUV1ToUV0(mesh);
+                    if (duplicatedMesh == null) continue;
+
                     Texture2D lightmap = lightmapData.lightmapColor;
-                    
+
                     string slotTargetId = GetResoLinkSlotIdFromName(meshRenderers[i].gameObject.name);
                     await SendMeshRendererToResoLink(assetIds, slotTargetId, duplicatedMesh, lightmap);
 
-                    progressCallback?.Invoke($"Applying lightmap offsets... ({i}/{total})", i / (float)total);
+                    progressCallback?.Invoke($"Sending lightmaps... ({i + 1}/{total})", (i + 1) / (float)total);
+                    await Task.Delay(1);
                 }
 
                 await UpdateListItems(compressionMultiDriverId, $"[FrooxEngine]FrooxEngine.ValueMultiDriver<{compressionType}>", textureElementsToSend);
@@ -1182,11 +1189,20 @@ namespace LightBakingResoLink {
             return (meshId, materialId);
         }
 
+        private Dictionary<Texture2D, string> lightmapUriCache = new Dictionary<Texture2D, string>();
+
         private async Task SendMeshRendererToResoLink((string, string, string, string) assetIds, string targetId, Mesh mesh, Texture2D lightmap) {
             if (!IsConnected()) return;
 
             string meshUri = await SendUnityMeshToResoLink(mesh);
-            string lightmapUri = await SendTextureToResoLink(lightmap);
+
+            string lightmapUri;
+            if (lightmapUriCache.TryGetValue(lightmap, out lightmapUri)) {
+                // キャッシュヒット、再送信スキップ
+            } else {
+                lightmapUri = await SendTextureToResoLink(lightmap);
+                lightmapUriCache[lightmap] = lightmapUri;
+            }
 
             (string, string) assets = await AddLightmapAssetsToSlots(assetIds, meshUri, lightmapUri);
             string meshRendererId = await AddMeshRendererToResolinkSlot(targetId, assets.Item1, assets.Item2);

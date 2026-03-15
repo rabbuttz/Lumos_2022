@@ -10,8 +10,8 @@ namespace ResoMeshXParsing {
     public class MeshXCache {
         private static MeshXCache instance;
         private static readonly object lockObj = new object();
-        public string cacheDirectory = "%USERPROFILE%/AppData/Local/Temp/Yellow Dog Man Studios/Resonite";
-        public string dataDirectory = "%USERPROFILE%/AppData/LocalLow/Yellow Dog Man Studios/Resonite";
+        public string cacheDirectory = Environment.ExpandEnvironmentVariables("%USERPROFILE%") + "/AppData/Local/Temp/Yellow Dog Man Studios/Resonite";
+        public string dataDirectory = Environment.ExpandEnvironmentVariables("%USERPROFILE%") + "/AppData/LocalLow/Yellow Dog Man Studios/Resonite";
         private Dictionary<string, string> cachedUriPaths = new Dictionary<string, string>();
         private Dictionary<string, Mesh> cachedMeshData = new Dictionary<string, Mesh>();
         private static readonly ThreadLocal<SHA256> sha256Pool = new ThreadLocal<SHA256>(() => SHA256.Create(), trackAllValues: false);
